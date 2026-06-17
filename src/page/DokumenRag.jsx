@@ -5,18 +5,19 @@ import {
   hapusDokumen,
   lihatDokumen,
   updateDokumen,
-  rebuildDokumenRag,
 } from "../services/api";
 import {
   Eye,
   Pencil,
   Trash2,
   Plus,
-  RefreshCw,
   Search,
   X,
   Save,
   Upload,
+  CheckCircle,
+  AlertCircle,
+  Loader2,
 } from "lucide-react";
 
 export default function DokumenRag() {
@@ -27,20 +28,18 @@ export default function DokumenRag() {
   const [selectedId, setSelectedId] = useState(null);
   const [currentPage, setCurrentPage] = useState(1);
   const [toast, setToast] = useState("");
-  const [isRebuilding, setIsRebuilding] = useState(false);
+  const [isProcessing, setIsProcessing] = useState(false); // ← Loading state
 
-  const itemsPerPage = 5;
+  const itemsPerPage = 10; // saya naikkan jadi 10, lebih nyaman
 
-  const emptyForm = {
-    judul: "",
-    file: null,
-  };
+  
 
+  const emptyForm = { judul: "", file: null };
   const [formData, setFormData] = useState(emptyForm);
 
   const showToast = (message) => {
     setToast(message);
-    setTimeout(() => setToast(""), 2500);
+    setTimeout(() => setToast(""), 3000);
   };
 
   const fetchDocuments = async () => {
@@ -59,15 +58,14 @@ export default function DokumenRag() {
 
   const filteredDocuments = useMemo(() => {
     const keyword = search.toLowerCase();
-
     return documents.filter((doc) =>
-      doc.judul?.toLowerCase().includes(keyword)
+      doc.judul?.toLowerCase().includes(keyword),
     );
   }, [documents, search]);
 
   const totalPages = Math.max(
     1,
-    Math.ceil(filteredDocuments.length / itemsPerPage)
+    Math.ceil(filteredDocuments.length / itemsPerPage),
   );
 
   const paginatedDocuments = useMemo(() => {
@@ -85,10 +83,7 @@ export default function DokumenRag() {
   const openEditModal = (doc) => {
     setMode("edit");
     setSelectedId(doc.id);
-    setFormData({
-      judul: doc.judul || "",
-      file: null,
-    });
+    setFormData({ judul: doc.judul || "", file: null });
     setIsModalOpen(true);
   };
 
@@ -100,106 +95,71 @@ export default function DokumenRag() {
 
   const handleChange = (e) => {
     const { name, value } = e.target;
-
-    setFormData((prev) => ({
-      ...prev,
-      [name]: value,
-    }));
+    setFormData((prev) => ({ ...prev, [name]: value }));
   };
 
   const handleFileChange = (e) => {
     const selectedFile = e.target.files?.[0] || null;
-
     if (selectedFile && selectedFile.type !== "application/pdf") {
       alert("File harus PDF.");
       return;
     }
-
-    setFormData((prev) => ({
-      ...prev,
-      file: selectedFile,
-    }));
+    setFormData((prev) => ({ ...prev, file: selectedFile }));
   };
 
-  const handleSubmit = async (e) => {
-    e.preventDefault();
+const handleSubmit = async (e) => {
+  e.preventDefault();
 
-    if (!formData.judul) {
-      alert("Judul wajib diisi.");
-      return;
+  if (!formData.judul) {
+    return alert("Judul wajib diisi.");
+  }
+
+  if (mode === "add" && !formData.file) {
+    return alert("File PDF wajib diisi.");
+  }
+
+  closeModal();
+  setIsProcessing(true);
+
+  try {
+    const form = new FormData();
+    form.append("judul", formData.judul);
+
+    if (formData.file) {
+      form.append("file", formData.file);
     }
 
-    try {
-      if (mode === "add") {
-        if (!formData.file) {
-          alert("File wajib diisi.");
-          return;
-        }
-
-        const form = new FormData();
-        form.append("judul", formData.judul);
-        form.append("file", formData.file);
-
-        await uploadDokumen(form);
-        showToast("Dokumen berhasil diupload.");
-      }
-
-      if (mode === "edit") {
-        await updateDokumen(selectedId, {
-          judul: formData.judul,
-        });
-
-        showToast("Judul dokumen berhasil diedit.");
-      }
-
-      await fetchDocuments();
-      closeModal();
-    } catch (error) {
-      console.error(error);
-      showToast("Gagal menyimpan dokumen.");
+    if (mode === "add") {
+      await uploadDokumen(form);
+      showToast("✅ Dokumen berhasil diupload.");
+    } else {
+      await updateDokumen(selectedId, form);
+      showToast("✅ Dokumen berhasil diupdate.");
     }
-  };
+
+    await fetchDocuments();
+  } catch (err) {
+    console.log(err);
+    showToast("❌ Gagal memproses dokumen.");
+  } finally {
+    setIsProcessing(false);
+  }
+};
 
   const handleDelete = async (id) => {
-    const confirmDelete = window.confirm("Yakin ingin menghapus dokumen ini?");
-    if (!confirmDelete) return;
+    if (
+      !window.confirm("Yakin ingin menghapus dokumen ini beserta vector-nya?")
+    )
+      return;
 
     try {
       await hapusDokumen(id);
       await fetchDocuments();
-      showToast("Dokumen berhasil dihapus.");
+      showToast("✅ Dokumen berhasil dihapus.");
     } catch (error) {
       console.error(error);
-      showToast("Gagal menghapus dokumen.");
+      showToast("❌ Gagal menghapus dokumen.");
     }
-  };
-
-  const handleRebuild = async () => {
-    const ok = window.confirm("Yakin ingin rebuild dokumen RAG?");
-    if (!ok) return;
-
-    try {
-      setIsRebuilding(true);
-
-      const result = await rebuildDokumenRag();
-
-      if (result.success) {
-        showToast("Rebuild dokumen RAG berhasil.");
-      } else {
-        showToast("Rebuild dokumen RAG gagal.");
-        console.error(result.error);
-      }
-    } catch (error) {
-      console.error(error);
-      showToast("Terjadi error saat rebuild.");
-    } finally {
-      setIsRebuilding(false);
-    }
-  };
-
-  const handleSearchChange = (e) => {
-    setSearch(e.target.value);
-    setCurrentPage(1);
   };
 
   return (
@@ -223,9 +183,11 @@ export default function DokumenRag() {
                   type="text"
                   placeholder="Cari dokumen..."
                   value={search}
-                  onChange={handleSearchChange}
-                  disabled={isRebuilding}
-                  className="w-full px-3 py-2 text-sm outline-none disabled:bg-gray-100"
+                  onChange={(e) => {
+                    setSearch(e.target.value);
+                    setCurrentPage(1);
+                  }}
+                  className="w-full px-3 py-2 text-sm outline-none"
                 />
                 <div className="px-3 text-[#00923F]">
                   <Search size={18} />
@@ -233,30 +195,14 @@ export default function DokumenRag() {
               </div>
             </div>
 
-            <div className="flex items-center gap-3">
-              <button
-                type="button"
-                onClick={openAddModal}
-                disabled={isRebuilding}
-                className="flex items-center gap-2 rounded-md border border-[#00923F] px-4 py-2 text-sm font-medium text-[#00923F] hover:bg-[#f3fbf6] disabled:cursor-not-allowed disabled:opacity-50"
-              >
-                <Plus size={16} />
-                Tambah
-              </button>
-
-              <button
-                type="button"
-                onClick={handleRebuild}
-                disabled={isRebuilding}
-                className="flex items-center gap-2 rounded-md border border-[#00923F] px-4 py-2 text-sm font-medium text-[#00923F] hover:bg-[#f3fbf6] disabled:cursor-not-allowed disabled:opacity-50"
-              >
-                <RefreshCw
-                  size={16}
-                  className={isRebuilding ? "animate-spin" : ""}
-                />
-                {isRebuilding ? "Rebuilding..." : "Re-build"}
-              </button>
-            </div>
+            <button
+              onClick={openAddModal}
+              disabled={isProcessing}
+              className="flex items-center gap-2 rounded-md border border-[#00923F] px-4 py-2 text-sm font-medium text-[#00923F] hover:bg-[#f3fbf6] disabled:opacity-50"
+            >
+              <Plus size={16} />
+              Tambah Dokumen
+            </button>
           </div>
         </div>
 
@@ -271,11 +217,13 @@ export default function DokumenRag() {
                   Judul Dokumen
                 </th>
                 <th className="border border-gray-300 px-3 py-2 text-center">
+                  Status Index
+                </th>
+                <th className="border border-gray-300 px-3 py-2 text-center">
                   Aksi
                 </th>
               </tr>
             </thead>
-
             <tbody>
               {paginatedDocuments.length > 0 ? (
                 paginatedDocuments.map((doc, index) => (
@@ -283,41 +231,50 @@ export default function DokumenRag() {
                     <td className="border border-gray-300 px-3 py-2">
                       {(currentPage - 1) * itemsPerPage + index + 1}
                     </td>
-
-                    <td className="border border-gray-300 px-3 py-2">
+                    <td className="border border-gray-300 px-3 py-2 font-medium">
                       {doc.judul}
                     </td>
-
+                    <td className="border border-gray-300 px-3 py-2 text-center">
+                      <div className="flex items-center justify-center gap-1.5">
+                        {doc.chunk_count && doc.chunk_count > 0 ? (
+                          <>
+                            <CheckCircle size={16} className="text-green-600" />
+                            <span className="text-green-600 font-medium">
+                              {doc.chunk_count} chunks
+                            </span>
+                          </>
+                        ) : (
+                          <>
+                            <AlertCircle size={16} className="text-red-500" />
+                            <span className="text-red-500 text-xs">
+                              Belum diindex
+                            </span>
+                          </>
+                        )}
+                      </div>
+                    </td>
                     <td className="border border-gray-300 px-3 py-2">
                       <div className="flex items-center justify-center gap-2">
                         <button
-                          type="button"
                           onClick={() => lihatDokumen(doc.id)}
-                          disabled={isRebuilding}
-                          className="rounded p-1 text-blue-600 hover:bg-blue-50 disabled:cursor-not-allowed disabled:opacity-50"
-                          title="Lihat Dokumen"
+                          className="rounded p-1.5 text-blue-600 hover:bg-blue-50"
+                          title="Lihat PDF"
                         >
-                          <Eye size={16} />
+                          <Eye size={18} />
                         </button>
-
                         <button
-                          type="button"
                           onClick={() => openEditModal(doc)}
-                          disabled={isRebuilding}
-                          className="rounded p-1 text-amber-600 hover:bg-amber-50 disabled:cursor-not-allowed disabled:opacity-50"
+                          className="rounded p-1.5 text-amber-600 hover:bg-amber-50"
                           title="Edit Judul"
                         >
-                          <Pencil size={16} />
+                          <Pencil size={18} />
                         </button>
-
                         <button
-                          type="button"
                           onClick={() => handleDelete(doc.id)}
-                          disabled={isRebuilding}
-                          className="rounded p-1 text-red-600 hover:bg-red-50 disabled:cursor-not-allowed disabled:opacity-50"
+                          className="rounded p-1.5 text-red-600 hover:bg-red-50"
                           title="Hapus"
                         >
-                          <Trash2 size={16} />
+                          <Trash2 size={18} />
                         </button>
                       </div>
                     </td>
@@ -326,10 +283,10 @@ export default function DokumenRag() {
               ) : (
                 <tr>
                   <td
-                    colSpan="3"
-                    className="border border-gray-300 px-3 py-4 text-center text-gray-500"
+                    colSpan="4"
+                    className="border border-gray-300 px-3 py-8 text-center text-gray-500"
                   >
-                    Data tidak ditemukan
+                    Tidak ada dokumen ditemukan
                   </td>
                 </tr>
               )}
@@ -337,7 +294,8 @@ export default function DokumenRag() {
           </table>
         </div>
 
-        <div className="mt-4 flex flex-col items-center justify-between gap-3 sm:flex-row">
+        {/* Pagination yang lebih rapi */}
+        <div className="mt-4 flex items-center justify-between">
           <p className="text-sm text-gray-600">
             Menampilkan {paginatedDocuments.length} dari{" "}
             {filteredDocuments.length} data
@@ -345,47 +303,33 @@ export default function DokumenRag() {
 
           <div className="flex items-center gap-2">
             <button
-              type="button"
               onClick={() => setCurrentPage((prev) => Math.max(prev - 1, 1))}
-              disabled={currentPage === 1 || isRebuilding}
-              className="rounded-md border border-gray-300 px-3 py-1.5 text-sm disabled:cursor-not-allowed disabled:opacity-50"
+              disabled={currentPage === 1}
+              className="rounded-md border border-gray-300 px-4 py-2 text-sm disabled:opacity-50"
             >
-              Prev
+              Sebelumnya
             </button>
 
-            {Array.from({ length: totalPages }, (_, i) => i + 1).map(
-              (page) => (
-                <button
-                  key={page}
-                  type="button"
-                  onClick={() => setCurrentPage(page)}
-                  disabled={isRebuilding}
-                  className={`rounded-md px-3 py-1.5 text-sm disabled:cursor-not-allowed disabled:opacity-50 ${
-                    currentPage === page
-                      ? "bg-[#00923F] text-white"
-                      : "border border-gray-300 text-gray-700"
-                  }`}
-                >
-                  {page}
-                </button>
-              )
-            )}
+            <span className="px-4 py-2 text-sm">
+              Halaman <strong>{currentPage}</strong> dari {totalPages}
+            </span>
 
             <button
-              type="button"
               onClick={() =>
                 setCurrentPage((prev) => Math.min(prev + 1, totalPages))
               }
-              disabled={currentPage === totalPages || isRebuilding}
-              className="rounded-md border border-gray-300 px-3 py-1.5 text-sm disabled:cursor-not-allowed disabled:opacity-50"
+              disabled={currentPage === totalPages}
+              className="rounded-md border border-gray-300 px-4 py-2 text-sm disabled:opacity-50"
             >
-              Next
+              Berikutnya
             </button>
           </div>
         </div>
       </div>
 
-      {isModalOpen && !isRebuilding && (
+      {/* MODAL dengan Loading */}
+      {/* MODAL */}
+      {isModalOpen && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/30 px-4">
           <div className="relative w-full max-w-lg rounded-md bg-white p-6 shadow-xl">
             <button
@@ -397,8 +341,7 @@ export default function DokumenRag() {
             </button>
 
             <h2 className="mb-6 text-center text-2xl font-bold text-[#00923F]">
-              {mode === "add" && "Tambah Dokumen RAG"}
-              {mode === "edit" && "Edit Judul Dokumen"}
+              {mode === "add" ? "Tambah Dokumen RAG" : "Edit Judul Dokumen"}
             </h2>
 
             <form onSubmit={handleSubmit} className="space-y-5">
@@ -411,47 +354,49 @@ export default function DokumenRag() {
                   name="judul"
                   value={formData.judul}
                   onChange={handleChange}
-                  placeholder="Contoh: Pedoman Akademik"
+                  placeholder="Contoh: Panduan Akademik 2026"
                   className="w-full rounded-md border-2 border-[#34a853] px-4 py-2.5 text-sm outline-none"
+                  required
                 />
               </div>
 
-              {mode === "add" && (
-                <div>
-                  <label className="mb-2 block text-sm font-semibold text-[#00923F]">
-                    File PDF
-                  </label>
+              <div>
+                <label className="mb-2 block text-sm font-semibold text-[#00923F]">
+                  File PDF
+                </label>
 
-                  <div className="flex overflow-hidden rounded-md border-2 border-[#34a853]">
+                <div className="flex overflow-hidden rounded-lg border border-[#34a853]">
+                  <input
+                    type="text"
+                    value={formData.file?.name || ""}
+                    readOnly
+                    placeholder={
+                      mode === "edit"
+                        ? "Pilih file baru jika ingin mengganti PDF"
+                        : "Belum ada file dipilih"
+                    }
+                    className="w-full bg-white px-4 py-3 text-sm outline-none"
+                  />
+
+                  <label className="flex cursor-pointer items-center justify-center whitespace-nowrap bg-[#00923F] px-5 py-3 text-sm font-medium text-white hover:bg-[#007a35]">
+                    Pilih File
                     <input
-                      type="text"
-                      value={formData.file?.name || ""}
-                      placeholder="Pilih file PDF"
-                      readOnly
-                      className="w-full px-4 py-2.5 text-sm outline-none"
+                      type="file"
+                      accept=".pdf"
+                      hidden
+                      onChange={handleFileChange}
                     />
-
-                    <label className="flex cursor-pointer items-center gap-2 bg-[#00923F] px-5 py-2.5 text-sm font-semibold text-white hover:bg-[#007a35]">
-                      <Upload size={16} />
-                      Upload
-                      <input
-                        type="file"
-                        accept=".pdf"
-                        className="hidden"
-                        onChange={handleFileChange}
-                      />
-                    </label>
-                  </div>
+                  </label>
                 </div>
-              )}
 
-              {mode === "edit" && (
-                <div className="rounded-md border border-gray-200 bg-gray-50 p-4 text-sm text-gray-600">
-                  Edit hanya mengubah judul dokumen. File PDF tetap sama.
-                </div>
-              )}
+                {mode === "edit" && (
+                  <p className="mt-2 text-xs text-gray-500">
+                    Kosongkan jika tidak ingin mengganti file PDF.
+                  </p>
+                )}
+              </div>
 
-              <div className="flex justify-end gap-3">
+              <div className="flex justify-end gap-3 pt-4">
                 <button
                   type="button"
                   onClick={closeModal}
@@ -462,34 +407,43 @@ export default function DokumenRag() {
 
                 <button
                   type="submit"
-                  className="flex items-center gap-2 rounded-md border border-[#00923F] px-5 py-2.5 text-sm font-medium text-[#00923F] hover:bg-[#f3fbf6]"
+                  disabled={isProcessing}
+                  className="flex items-center gap-2 rounded-md bg-[#00923F] px-5 py-2.5 text-sm font-medium text-white hover:bg-[#007a35] disabled:opacity-50"
                 >
-                  <Save size={18} />
-                  Simpan
+                  {isProcessing ? (
+                    <>
+                      <Loader2 size={18} className="animate-spin" />
+                      Memproses...
+                    </>
+                  ) : (
+                    <>
+                      <Save size={18} />
+                      {mode === "add" ? "Upload & Index" : "Simpan Perubahan"}
+                    </>
+                  )}
                 </button>
               </div>
             </form>
           </div>
         </div>
       )}
+      {isProcessing && (
+        <div className="fixed inset-0 z-[9999] flex items-center justify-center bg-black/40">
+          <div className="w-96 rounded-xl bg-white p-8 shadow-xl">
+            <div className="flex flex-col items-center gap-4">
+              <Loader2 size={50} className="animate-spin text-[#00923F]" />
 
-      {isRebuilding && (
-        <div className="fixed inset-0 z-[9999] flex items-center justify-center bg-black/50 backdrop-blur-sm">
-          <div className="flex w-[350px] flex-col items-center rounded-2xl bg-white px-8 py-8 shadow-2xl">
-            <div className="mb-5 h-16 w-16 animate-spin rounded-full border-4 border-[#00923F] border-t-transparent" />
+              <h3 className="text-lg font-bold text-[#00923F]">
+                Memproses Dokumen
+              </h3>
 
-            <h2 className="text-xl font-bold text-[#00923F]">
-              Rebuilding RAG
-            </h2>
-
-            <p className="mt-3 text-center text-sm text-gray-600">
-              Sistem sedang memproses dokumen, membuat embedding, dan
-              memperbarui FAISS index.
-            </p>
-
-            <p className="mt-5 text-xs text-gray-400">
-              Mohon tunggu sebentar...
-            </p>
+              <p className="text-center text-sm text-gray-600">
+                Dokumen sedang diupload, dilakukan chunking, embedding, dan
+                indexing ke database.
+                <br />
+                Mohon tunggu beberapa saat...
+              </p>
+            </div>
           </div>
         </div>
       )}

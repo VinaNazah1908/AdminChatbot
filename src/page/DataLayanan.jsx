@@ -4,7 +4,6 @@ import {
   tambahDataLayanan,
   updateDataLayanan,
   hapusDataLayanan,
-  rebuildDataLayanan,
 } from "../services/api";
 import {
   Pencil,
@@ -14,7 +13,9 @@ import {
   X,
   Save,
   Phone,
-  RefreshCw,
+  Loader2,
+  CheckCircle,
+  AlertCircle,
 } from "lucide-react";
 
 export default function DataLayanan() {
@@ -25,7 +26,7 @@ export default function DataLayanan() {
   const [selectedId, setSelectedId] = useState(null);
   const [currentPage, setCurrentPage] = useState(1);
   const [toast, setToast] = useState("");
-  const [isRebuilding, setIsRebuilding] = useState(false);
+  const [isProcessing, setIsProcessing] = useState(false);
 
   const itemsPerPage = 10;
 
@@ -113,28 +114,7 @@ export default function DataLayanan() {
     setFormData((prev) => ({ ...prev, [name]: value }));
   };
 
-  const handleRebuild = async () => {
-    const ok = window.confirm("Yakin ingin rebuild data layanan?");
-    if (!ok) return;
 
-    try {
-      setIsRebuilding(true);
-
-      const result = await rebuildDataLayanan();
-
-      if (result.success) {
-        showToast("Rebuild data layanan berhasil.");
-      } else {
-        showToast("Rebuild data layanan gagal.");
-        console.error(result.error);
-      }
-    } catch (error) {
-      console.error(error);
-      showToast("Terjadi error saat rebuild.");
-    } finally {
-      setIsRebuilding(false);
-    }
-  };
 
   const handleSubmit = async (e) => {
     e.preventDefault();
@@ -146,8 +126,7 @@ export default function DataLayanan() {
       !formData.whatsapp ||
       !formData.jam
     ) {
-      alert("Semua field wajib diisi.");
-      return;
+      return alert("Semua field wajib diisi.");
     }
 
     const payload = {
@@ -158,36 +137,44 @@ export default function DataLayanan() {
       jam: formData.jam,
     };
 
+    setIsProcessing(true);
+
     try {
       if (mode === "add") {
         await tambahDataLayanan(payload);
-        showToast("Data berhasil disimpan.");
-      }
-
-      if (mode === "edit" && selectedId !== null) {
+        showToast("✅ Data layanan berhasil ditambahkan.");
+      } else {
         await updateDataLayanan(selectedId, payload);
-        showToast("Data berhasil diedit.");
+        showToast("✅ Data layanan berhasil diperbarui.");
       }
 
       await fetchDataLayanan();
       closeModal();
     } catch (error) {
       console.error(error);
-      showToast("Gagal menyimpan data.");
+      showToast("❌ Gagal menyimpan data layanan.");
+    } finally {
+      setIsProcessing(false);
     }
   };
 
   const handleDelete = async (id) => {
-    const ok = window.confirm("Yakin ingin menghapus layanan ini?");
-    if (!ok) return;
+    if (!window.confirm("Yakin ingin menghapus data layanan ini?")) {
+      return;
+    }
+
+    setIsProcessing(true);
 
     try {
       await hapusDataLayanan(id);
       await fetchDataLayanan();
-      showToast("Data berhasil dihapus.");
+
+      showToast("✅ Data layanan berhasil dihapus.");
     } catch (error) {
       console.error(error);
-      showToast("Gagal menghapus data.");
+      showToast("❌ Gagal menghapus data layanan.");
+    } finally {
+      setIsProcessing(false);
     }
   };
 
@@ -199,7 +186,7 @@ export default function DataLayanan() {
   return (
     <main className="relative p-3">
       {toast && (
-        <div className="fixed right-6 top-6 z-[10000] rounded-md bg-[#00923F] px-5 py-3 text-sm font-medium text-white shadow-lg">
+        <div className="fixed right-6 top-6 z-10000 rounded-md bg-[#00923F] px-5 py-3 text-sm font-medium text-white shadow-lg">
           {toast}
         </div>
       )}
@@ -218,7 +205,7 @@ export default function DataLayanan() {
                   placeholder="Cari data layanan..."
                   value={search}
                   onChange={handleSearchChange}
-                  disabled={isRebuilding}
+                  disabled={isProcessing}
                   className="w-full px-3 py-2 text-sm outline-none disabled:bg-gray-100"
                 />
                 <div className="px-3 text-[#00923F]">
@@ -227,28 +214,15 @@ export default function DataLayanan() {
               </div>
             </div>
 
-            <div className="flex items-center gap-3">
+            <div>
               <button
                 type="button"
                 onClick={openAddModal}
-                disabled={isRebuilding}
+                disabled={isProcessing}
                 className="flex items-center gap-2 rounded-md border border-[#00923F] px-4 py-2 text-sm font-medium text-[#00923F] hover:bg-[#f3fbf6] disabled:cursor-not-allowed disabled:opacity-50"
               >
                 <Plus size={16} />
                 Tambah
-              </button>
-
-              <button
-                type="button"
-                onClick={handleRebuild}
-                disabled={isRebuilding}
-                className="flex items-center gap-2 rounded-md border border-[#00923F] px-4 py-2 text-sm font-medium text-[#00923F] hover:bg-[#f3fbf6] disabled:cursor-not-allowed disabled:opacity-50"
-              >
-                <RefreshCw
-                  size={16}
-                  className={isRebuilding ? "animate-spin" : ""}
-                />
-                {isRebuilding ? "Rebuilding..." : "Re-build"}
               </button>
             </div>
           </div>
@@ -272,6 +246,9 @@ export default function DataLayanan() {
                 </th>
                 <th className="border border-gray-300 px-3 py-2 text-left">
                   Jam
+                </th>
+                <th className="border border-gray-300 px-3 py-2 text-center">
+                  Status Index
                 </th>
                 <th className="border border-gray-300 px-3 py-2 text-center">
                   Aksi
@@ -305,13 +282,24 @@ export default function DataLayanan() {
                     <td className="border border-gray-300 px-3 py-2">
                       {item.jam}
                     </td>
+                    <td className="border border-gray-300 px-3 py-2 text-center">
+                      {item.embedding ? (
+                        <span className="inline-flex items-center gap-1 rounded-full bg-green-100 px-2 py-1 text-xs font-medium text-green-700">
+                          ✅ Berhasil
+                        </span>
+                      ) : (
+                        <span className="inline-flex items-center gap-1 rounded-full bg-red-100 px-2 py-1 text-xs font-medium text-red-700">
+                          ❌ Gagal
+                        </span>
+                      )}
+                    </td>
 
                     <td className="border border-gray-300 px-3 py-2">
                       <div className="flex items-center justify-center gap-2">
                         <button
                           type="button"
                           onClick={() => openEditModal(item)}
-                          disabled={isRebuilding}
+                          disabled={isProcessing}
                           className="rounded p-1 text-amber-600 hover:bg-amber-50 disabled:cursor-not-allowed disabled:opacity-50"
                           title="Edit"
                         >
@@ -321,7 +309,7 @@ export default function DataLayanan() {
                         <button
                           type="button"
                           onClick={() => handleDelete(item.id)}
-                          disabled={isRebuilding}
+                          disabled={isProcessing}
                           className="rounded p-1 text-red-600 hover:bg-red-50 disabled:cursor-not-allowed disabled:opacity-50"
                           title="Hapus"
                         >
@@ -355,7 +343,7 @@ export default function DataLayanan() {
             <button
               type="button"
               onClick={() => setCurrentPage((prev) => Math.max(prev - 1, 1))}
-              disabled={currentPage === 1 || isRebuilding}
+              disabled={currentPage === 1 || isProcessing}
               className="rounded-md border border-gray-300 px-3 py-1.5 text-sm disabled:cursor-not-allowed disabled:opacity-50"
             >
               Prev
@@ -366,7 +354,7 @@ export default function DataLayanan() {
                 key={page}
                 type="button"
                 onClick={() => setCurrentPage(page)}
-                disabled={isRebuilding}
+                disabled={isProcessing}
                 className={`rounded-md px-3 py-1.5 text-sm disabled:cursor-not-allowed disabled:opacity-50 ${
                   currentPage === page
                     ? "bg-[#00923F] text-white"
@@ -382,7 +370,7 @@ export default function DataLayanan() {
               onClick={() =>
                 setCurrentPage((prev) => Math.min(prev + 1, totalPages))
               }
-              disabled={currentPage === totalPages || isRebuilding}
+              disabled={currentPage === totalPages || isProcessing}
               className="rounded-md border border-gray-300 px-3 py-1.5 text-sm disabled:cursor-not-allowed disabled:opacity-50"
             >
               Next
@@ -391,7 +379,7 @@ export default function DataLayanan() {
         </div>
       </div>
 
-      {isModalOpen && !isRebuilding && (
+      {isModalOpen && !isProcessing && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/30 px-4">
           <div className="relative flex max-h-[85vh] w-full max-w-lg flex-col rounded-md bg-white shadow-xl">
             <div className="shrink-0 border-b border-gray-200 p-6">
@@ -513,23 +501,23 @@ export default function DataLayanan() {
         </div>
       )}
 
-      {isRebuilding && (
-        <div className="fixed inset-0 z-9999 flex items-center justify-center bg-black/50 backdrop-blur-sm">
-          <div className="flex w-350px flex-col items-center rounded-2xl bg-white px-8 py-8 shadow-2xl">
-            <div className="mb-5 h-16 w-16 animate-spin rounded-full border-4 border-[#00923F] border-t-transparent" />
+      {isProcessing && (
+        <div className="fixed inset-0 z-9999 flex items-center justify-center bg-black/40">
+          <div className="w-96 rounded-xl bg-white p-8 shadow-xl">
+            <div className="flex flex-col items-center gap-4">
+              <Loader2 size={50} className="animate-spin text-[#00923F]" />
 
-            <h2 className="text-xl font-bold text-[#00923F]">
-              Rebuilding Data Layanan
-            </h2>
+              <h3 className="text-lg font-bold text-[#00923F]">
+                Memproses Data Layanan
+              </h3>
 
-            <p className="mt-3 text-center text-sm text-gray-600">
-              Sistem sedang memproses data layanan, membuat embedding, dan
-              memperbarui FAISS index data layanan.
-            </p>
-
-            <p className="mt-5 text-xs text-gray-400">
-              Mohon tunggu sebentar...
-            </p>
+              <p className="text-center text-sm text-gray-600">
+                Data layanan sedang diproses dan dilakukan embedding ke vector
+                database.
+                <br />
+                Mohon tunggu beberapa saat...
+              </p>
+            </div>
           </div>
         </div>
       )}

@@ -5,6 +5,7 @@ import multer from "multer";
 import pkg from "pg";
 
 dotenv.config();
+console.log(process.env.DATABASE_URL);
 
 const { Pool } = pkg;
 const app = express();
@@ -16,6 +17,46 @@ app.use(express.json());
 const db = new Pool({
   connectionString: process.env.DATABASE_URL,
 });
+// Helper untuk proses ke Python vector service
+async function processDocumentToVector(doc_id, judul, file_buffer) {
+  let attempts = 0;
+  const maxAttempts = 3;
+
+  while (attempts < maxAttempts) {
+    try {
+      const response = await fetch("http://localhost:8000/add-document", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          doc_id: parseInt(doc_id),
+          judul: judul,
+          file_base64: file_buffer.toString("base64"),
+        }),
+      });
+
+      const result = await response.json();
+
+      if (result.success) {
+        console.log(`✅ Vector berhasil untuk dokumen ${doc_id}`);
+        return result;
+      } else {
+        console.warn(`⚠️ Vector gagal: ${result.message}`);
+      }
+    } catch (error) {
+      console.error(`❌ Attempt ${attempts + 1} gagal:`, error.message);
+    }
+
+    attempts++;
+    if (attempts < maxAttempts) {
+      await new Promise((resolve) => setTimeout(resolve, 800)); // tunggu sebentar
+    }
+  }
+
+  return {
+    success: false,
+    message: "Vector processing gagal setelah beberapa percobaan",
+  };
+}
 
 // CEK BACKEND
 app.get("/", (req, res) => {
@@ -44,17 +85,31 @@ app.post("/data-layanan", async (req, res) => {
   const { nama_layanan, deskripsi, nama_kontak, nomor_wa, jam } = req.body;
 
   try {
+    // 1. Simpan data ke database
     const result = await db.query(
-      `INSERT INTO data_layanan
+      `
+      INSERT INTO data_layanan
       (nama_layanan, deskripsi, nama_kontak, nomor_wa, jam)
       VALUES ($1, $2, $3, $4, $5)
-      RETURNING *`,
-      [nama_layanan, deskripsi, nama_kontak, nomor_wa, jam]
+      RETURNING *
+      `,
+      [nama_layanan, deskripsi, nama_kontak, nomor_wa, jam],
     );
 
-    res.json(result.rows[0]);
+    const layananBaru = result.rows[0];
+
+    await fetch("http://localhost:8000/sync-data-layanan", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify(layananBaru),
+    });
+
+    res.json(layananBaru);
   } catch (error) {
     console.error("POST /data-layanan error:", error);
+
     res.status(500).json({
       success: false,
       message: "Gagal menambah data layanan",
@@ -68,17 +123,37 @@ app.put("/data-layanan/:id", async (req, res) => {
   const { nama_layanan, deskripsi, nama_kontak, nomor_wa, jam } = req.body;
 
   try {
+    // 1. Update data layanan
     const result = await db.query(
-      `UPDATE data_layanan
-       SET nama_layanan=$1, deskripsi=$2, nama_kontak=$3, nomor_wa=$4, jam=$5
-       WHERE id=$6
-       RETURNING *`,
-      [nama_layanan, deskripsi, nama_kontak, nomor_wa, jam, id]
+      `
+      UPDATE data_layanan
+      SET
+        nama_layanan = $1,
+        deskripsi = $2,
+        nama_kontak = $3,
+        nomor_wa = $4,
+        jam = $5
+      WHERE id = $6
+      RETURNING *
+      `,
+      [nama_layanan, deskripsi, nama_kontak, nomor_wa, jam, id],
     );
 
-    res.json(result.rows[0]);
+    const layanan = result.rows[0];
+
+    // 2. Generate embedding ulang
+    await fetch("http://localhost:8000/sync-data-layanan", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify(layanan),
+    });
+
+    res.json(layanan);
   } catch (error) {
     console.error("PUT /data-layanan/:id error:", error);
+
     res.status(500).json({
       success: false,
       message: "Gagal mengubah data layanan",
@@ -106,26 +181,26 @@ app.delete("/data-layanan/:id", async (req, res) => {
 });
 
 // =======================
-// DOKUMEN RAG
+// DOKUMEN RAG (FULL INCREMENTAL)
 // =======================
 
+// GET semua dokumen
 app.get("/dokumen-rag", async (req, res) => {
   try {
-    const result = await db.query(
-      "SELECT id, judul FROM dokumen_rag ORDER BY id ASC"
-    );
-
+    const result = await db.query(`
+      SELECT id, judul, 
+             (SELECT COUNT(*) FROM document_chunks WHERE doc_id = dokumen_rag.id) as chunk_count
+      FROM dokumen_rag 
+      ORDER BY id ASC
+    `);
     res.json(result.rows);
   } catch (error) {
-    console.error("GET /dokumen-rag error:", error);
-    res.status(500).json({
-      success: false,
-      message: "Gagal mengambil dokumen RAG",
-      error: error.message,
-    });
+    console.error(error);
+    res.status(500).json({ success: false, message: "Gagal mengambil data" });
   }
 });
 
+// UPLOAD BARU
 app.post("/dokumen-rag", upload.single("file"), async (req, res) => {
   const { judul } = req.body;
   const file = req.file?.buffer;
@@ -138,124 +213,148 @@ app.post("/dokumen-rag", upload.single("file"), async (req, res) => {
   }
 
   try {
+    // 1. Simpan dokumen dulu
     const result = await db.query(
       "INSERT INTO dokumen_rag (judul, file) VALUES ($1, $2) RETURNING id, judul",
-      [judul, file]
+      [judul, file],
     );
 
-    res.json(result.rows[0]);
+    const newDoc = result.rows[0];
+
+    // 2. Proses vector setelah INSERT berhasil
+    await processDocumentToVector(newDoc.id, newDoc.judul, file);
+
+    res.json({
+      success: true,
+      message: "Dokumen berhasil diupload dan diindex",
+      data: newDoc,
+    });
   } catch (error) {
     console.error("POST /dokumen-rag error:", error);
     res.status(500).json({
       success: false,
-      message: "Gagal upload dokumen RAG",
+      message: "Gagal upload dokumen",
       error: error.message,
     });
   }
 });
-
+// LIHAT FILE PDF
 app.get("/dokumen-rag/:id/file", async (req, res) => {
+  const { id } = req.params;
+
   try {
     const result = await db.query(
-      "SELECT judul, file FROM dokumen_rag WHERE id=$1",
-      [req.params.id]
+      "SELECT file FROM dokumen_rag WHERE id = $1",
+      [id],
     );
 
     if (result.rows.length === 0) {
+      return res.status(404).send("Dokumen tidak ditemukan");
+    }
+
+    const pdfBuffer = result.rows[0].file;
+
+    res.setHeader("Content-Type", "application/pdf");
+    res.setHeader(
+      "Content-Disposition",
+      `inline; filename="dokumen_${id}.pdf"`,
+    );
+
+    res.send(pdfBuffer);
+  } catch (error) {
+    console.error(error);
+    res.status(500).send("Gagal membuka dokumen");
+  }
+});
+// EDIT (Update Judul + Re-index)
+// EDIT DOKUMEN
+app.put("/dokumen-rag/:id", upload.single("file"), async (req, res) => {
+  const { id } = req.params;
+  const { judul } = req.body;
+  const file = req.file?.buffer;
+
+  try {
+    // cek dokumen lama
+    const oldDoc = await db.query("SELECT * FROM dokumen_rag WHERE id=$1", [
+      id,
+    ]);
+
+    if (oldDoc.rows.length === 0) {
       return res.status(404).json({
         success: false,
         message: "Dokumen tidak ditemukan",
       });
     }
 
-    const dokumen = result.rows[0];
+    // =========================
+    // JIKA GANTI FILE PDF
+    // =========================
+    if (file) {
+      const result = await db.query(
+        `
+        UPDATE dokumen_rag
+        SET judul=$1, file=$2
+        WHERE id=$3
+        RETURNING *
+        `,
+        [judul, file, id],
+      );
 
-    res.setHeader("Content-Type", "application/pdf");
-    res.setHeader(
-      "Content-Disposition",
-      `inline; filename="${dokumen.judul}.pdf"`
-    );
+      const doc = result.rows[0];
 
-    res.send(dokumen.file);
-  } catch (error) {
-    console.error("GET /dokumen-rag/:id/file error:", error);
-    res.status(500).json({
-      success: false,
-      message: "Gagal membuka file dokumen",
-      error: error.message,
-    });
-  }
-});
+      // re-index hanya jika file berubah
+      await processDocumentToVector(doc.id, doc.judul, file);
 
-app.put("/dokumen-rag/:id", async (req, res) => {
-  const { judul } = req.body;
+      return res.json({
+        success: true,
+        message: "Dokumen berhasil diupdate dan diindex ulang",
+        data: doc,
+      });
+    }
 
-  if (!judul) {
-    return res.status(400).json({
-      success: false,
-      message: "Judul wajib diisi",
-    });
-  }
-
-  try {
+    // =========================
+    // JIKA HANYA GANTI JUDUL
+    // =========================
     const result = await db.query(
-      "UPDATE dokumen_rag SET judul=$1 WHERE id=$2 RETURNING id, judul",
-      [judul, req.params.id]
+      `
+      UPDATE dokumen_rag
+      SET judul=$1
+      WHERE id=$2
+      RETURNING *
+      `,
+      [judul, id],
     );
-
-    res.json(result.rows[0]);
-  } catch (error) {
-    console.error("PUT /dokumen-rag/:id error:", error);
-    res.status(500).json({
-      success: false,
-      message: "Gagal mengubah dokumen",
-      error: error.message,
-    });
-  }
-});
-
-app.delete("/dokumen-rag/:id", async (req, res) => {
-  try {
-    await db.query("DELETE FROM dokumen_rag WHERE id=$1", [req.params.id]);
 
     res.json({
       success: true,
-      message: "Dokumen berhasil dihapus",
+      message: "Judul berhasil diupdate",
+      data: result.rows[0],
     });
   } catch (error) {
-    console.error("DELETE /dokumen-rag/:id error:", error);
+    console.error(error);
+
     res.status(500).json({
       success: false,
-      message: "Gagal menghapus dokumen",
+      message: "Gagal update dokumen",
       error: error.message,
     });
   }
 });
-
-// =======================
-// REBUILD DOKUMEN RAG
-// =======================
-
-app.post("/rebuild-dokumen-rag", async (req, res) => {
+// DELETE
+app.delete("/dokumen-rag/:id", async (req, res) => {
   try {
-    const response = await fetch("http://localhost:8000/rebuild-dokumen-rag", {
-      method: "POST",
+    await db.query("DELETE FROM dokumen_rag WHERE id=$1", [req.params.id]);
+    // Karena ada ON DELETE CASCADE, chunks otomatis terhapus
+
+    res.json({
+      success: true,
+      message: "Dokumen beserta vector-nya berhasil dihapus",
     });
-
-    const result = await response.json();
-
-    if (!result.success) {
-      return res.status(500).json(result);
-    }
-
-    res.json(result);
   } catch (error) {
-    console.error("POST /rebuild-dokumen-rag error:", error);
-    res.status(500).json({
-      success: false,
-      message: "Gagal menghubungi Python service",
-      error: error.message,
-    });
+    console.error(error);
+    res
+      .status(500)
+      .json({ success: false, message: "Gagal menghapus dokumen" });
   }
 });
 
@@ -316,7 +415,7 @@ app.get("/laporans/:id/messages", async (req, res) => {
   try {
     const laporanResult = await db.query(
       "SELECT * FROM laporans WHERE id = $1",
-      [id]
+      [id],
     );
 
     const messagesResult = await db.query(
@@ -326,7 +425,7 @@ app.get("/laporans/:id/messages", async (req, res) => {
       WHERE id_laporan = $1
       ORDER BY timestamp ASC
       `,
-      [id]
+      [id],
     );
 
     res.json({

@@ -67,13 +67,10 @@ export const lihatDokumen = (id) => {
   window.open(`${BASE_URL}/dokumen-rag/${id}/file`, "_blank");
 };
 
-export const updateDokumen = async (id, data) => {
+export const updateDokumen = async (id, formData) => {
   const res = await fetch(`${BASE_URL}/dokumen-rag/${id}`, {
     method: "PUT",
-    headers: {
-      "Content-Type": "application/json",
-    },
-    body: JSON.stringify(data),
+    body: formData,
   });
 
   return res.json();

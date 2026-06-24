@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from "react";
 import { Search, Eye, Trash2 } from "lucide-react";
 import { useNavigate } from "react-router-dom";
 import { getLaporans, hapusLaporan, hapusSemuaLaporan } from "../services/api";
+import { Pagination } from "../components/Pagination";
 
 export default function DataUser() {
   const [laporans, setLaporans] = useState([]);
@@ -106,30 +107,10 @@ export default function DataUser() {
     });
   };
 
-  const getPageNumbers = () => {
-    const pages = [];
-
-    if (totalPages <= 5) {
-      for (let i = 1; i <= totalPages; i++) {
-        pages.push(i);
-      }
-    } else {
-      if (currentPage <= 3) {
-        pages.push(1, 2, 3, "...", totalPages);
-      } else if (currentPage >= totalPages - 2) {
-        pages.push(1, "...", totalPages - 2, totalPages - 1, totalPages);
-      } else {
-        pages.push(1, "...", currentPage, "...", totalPages);
-      }
-    }
-
-    return pages;
-  };
-
   return (
     <main className="relative p-3">
       {toast && (
-        <div className="fixed right-6 top-6 z-10000 rounded-md bg-#00923F px-5 py-3 text-sm font-medium text-white shadow-lg">
+        <div className="fixed right-6 top-6 z-[10000] rounded-md bg-[#00923F] px-5 py-3 text-sm font-medium text-white shadow-lg">
           {toast}
         </div>
       )}
@@ -264,72 +245,13 @@ export default function DataUser() {
           </table>
         </div>
 
-        <div className="mt-4 flex flex-col items-center justify-between gap-3 sm:flex-row">
-          <p className="text-sm text-gray-600">
-            Menampilkan {paginatedLaporans.length} dari{" "}
-            {filteredLaporans.length} data
-          </p>
-
-          <div className="flex items-center gap-2">
-            {/* Halaman pertama */}
-            <button
-              onClick={() => setCurrentPage(1)}
-              disabled={currentPage === 1}
-              className="rounded-md border border-gray-300 px-3 py-2 disabled:opacity-40"
-            >
-              {"<<"}
-            </button>
-
-            {/* Halaman sebelumnya */}
-            <button
-              onClick={() => setCurrentPage((prev) => Math.max(prev - 1, 1))}
-              disabled={currentPage === 1}
-              className="rounded-md border border-gray-300 px-3 py-2 disabled:opacity-40"
-            >
-              {"<"}
-            </button>
-
-            {getPageNumbers().map((page, index) =>
-              page === "..." ? (
-                <span key={index} className="px-2 text-gray-500">
-                  ...
-                </span>
-              ) : (
-                <button
-                  key={page}
-                  onClick={() => setCurrentPage(page)}
-                  className={`h-10 w-10 rounded-md text-sm font-medium ${
-                    currentPage === page
-                      ? "bg-[#00923F] text-white"
-                      : "border border-gray-300 bg-white text-gray-700"
-                  }`}
-                >
-                  {page}
-                </button>
-              ),
-            )}
-
-            {/* Halaman berikutnya */}
-            <button
-              onClick={() =>
-                setCurrentPage((prev) => Math.min(prev + 1, totalPages))
-              }
-              disabled={currentPage === totalPages}
-              className="rounded-md border border-gray-300 px-3 py-2 disabled:opacity-40"
-            >
-              {">"}
-            </button>
-
-            {/* Halaman terakhir */}
-            <button
-              onClick={() => setCurrentPage(totalPages)}
-              disabled={currentPage === totalPages}
-              className="rounded-md border border-gray-300 px-3 py-2 disabled:opacity-40"
-            >
-              {">>"}
-            </button>
-          </div>
-        </div>
+        <Pagination
+          currentPage={currentPage}
+          totalPages={totalPages}
+          totalItems={filteredLaporans.length}
+          visibleItems={paginatedLaporans.length}
+          onPageChange={setCurrentPage}
+        />
       </div>
     </main>
   );

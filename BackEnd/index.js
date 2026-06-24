@@ -3,11 +3,16 @@ import cors from "cors";
 import dotenv from "dotenv";
 import multer from "multer";
 import pkg from "pg";
+import path from "path";
+import { fileURLToPath } from "url";
+import { spawn } from "child_process";
 
 dotenv.config();
 console.log(process.env.DATABASE_URL);
 
 const { Pool } = pkg;
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
 const app = express();
 const upload = multer();
 
@@ -17,45 +22,96 @@ app.use(express.json());
 const db = new Pool({
   connectionString: process.env.DATABASE_URL,
 });
+
+async function runPythonSync(action, payload) {
+  return new Promise((resolve, reject) => {
+    const pythonPath = process.env.PYTHON_PATH || "python";
+    const scriptPath =
+      process.env.VECTOR_SYNC_SCRIPT ||
+      path.resolve(__dirname, "..", "..", "Chatbot-Testing", "vector_sync.py");
+    const child = spawn(pythonPath, [scriptPath, action, JSON.stringify(payload || {})], {
+      cwd: process.cwd(),
+      env: { ...process.env },
+    });
+
+    let stdout = "";
+    let stderr = "";
+
+    child.stdout.on("data", (data) => {
+      stdout += data.toString();
+    });
+
+    child.stderr.on("data", (data) => {
+      stderr += data.toString();
+    });
+
+    child.on("close", (code) => {
+      if (code !== 0) {
+        reject(new Error(stderr.trim() || stdout.trim() || "Python sync gagal"));
+        return;
+      }
+
+      try {
+        const jsonLine = stdout
+          .trim()
+          .split(/\r?\n/)
+          .reverse()
+          .find((line) => line.trim().startsWith("{"));
+
+        if (!jsonLine) {
+          reject(new Error(stdout.trim() || "Output Python kosong"));
+          return;
+        }
+
+        const result = JSON.parse(jsonLine);
+        resolve(result);
+      } catch (error) {
+        reject(new Error(`Gagal parsing output Python: ${error.message}`));
+      }
+    });
+  });
+}
+
 // Helper untuk proses ke Python vector service
 async function processDocumentToVector(doc_id, judul, file_buffer) {
-  let attempts = 0;
-  const maxAttempts = 3;
+  try {
+    const result = await runPythonSync("add-document", {
+      doc_id: parseInt(doc_id),
+      judul,
+      file_base64: file_buffer.toString("base64"),
+    });
 
-  while (attempts < maxAttempts) {
-    try {
-      const response = await fetch("http://localhost:8000/add-document", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          doc_id: parseInt(doc_id),
-          judul: judul,
-          file_base64: file_buffer.toString("base64"),
-        }),
-      });
-
-      const result = await response.json();
-
-      if (result.success) {
-        console.log(`✅ Vector berhasil untuk dokumen ${doc_id}`);
-        return result;
-      } else {
-        console.warn(`⚠️ Vector gagal: ${result.message}`);
-      }
-    } catch (error) {
-      console.error(`❌ Attempt ${attempts + 1} gagal:`, error.message);
+    if (result.success) {
+      console.log(`✅ Vector berhasil untuk dokumen ${doc_id}`);
+      return result;
     }
 
-    attempts++;
-    if (attempts < maxAttempts) {
-      await new Promise((resolve) => setTimeout(resolve, 800)); // tunggu sebentar
-    }
+    console.warn(`⚠️ Vector gagal: ${result.message}`);
+    throw new Error(result.message || "Vector processing gagal");
+  } catch (error) {
+    console.error(`❌ Vector processing gagal:`, error.message);
+    throw error;
+  }
+}
+
+async function syncIntentToVector(intent, utterance) {
+  const result = await runPythonSync("sync-intent", { intent, utterance });
+
+  if (!result.success) {
+    throw new Error(result.message || "Gagal sinkron intent ke vector service");
   }
 
-  return {
-    success: false,
-    message: "Vector processing gagal setelah beberapa percobaan",
-  };
+  return result;
+}
+
+async function updateIntentVector(id, intent, utterance) {
+  const result = await runPythonSync("update-intent", { id, intent, utterance });
+
+  if (!result.success) {
+    throw new Error(result.message || "Gagal update intent ke vector service");
+  }
+
+  return result;
 }
 
 // CEK BACKEND
@@ -98,13 +154,7 @@ app.post("/data-layanan", async (req, res) => {
 
     const layananBaru = result.rows[0];
 
-    await fetch("http://localhost:8000/sync-data-layanan", {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify(layananBaru),
-    });
+    await runPythonSync("sync-data-layanan", layananBaru);
 
     res.json(layananBaru);
   } catch (error) {
@@ -142,13 +192,7 @@ app.put("/data-layanan/:id", async (req, res) => {
     const layanan = result.rows[0];
 
     // 2. Generate embedding ulang
-    await fetch("http://localhost:8000/sync-data-layanan", {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify(layanan),
-    });
+    await runPythonSync("sync-data-layanan", layanan);
 
     res.json(layanan);
   } catch (error) {
@@ -181,6 +225,150 @@ app.delete("/data-layanan/:id", async (req, res) => {
 });
 
 // =======================
+// INTENT EMBEDDINGS
+// =======================
+
+app.get("/intent-embeddings", async (req, res) => {
+  try {
+    const result = await db.query(`
+      SELECT
+        id,
+        intent,
+        utterance,
+        updated_at,
+        embedding IS NOT NULL AS indexed
+      FROM intent_embeddings
+      ORDER BY updated_at DESC, id DESC
+    `);
+
+    res.json(result.rows);
+  } catch (error) {
+    console.error("GET /intent-embeddings error:", error);
+    res.status(500).json({
+      success: false,
+      message: "Gagal mengambil data intent",
+      error: error.message,
+    });
+  }
+});
+
+app.post("/intent-embeddings", async (req, res) => {
+  const { intent, utterance } = req.body;
+
+  if (!intent || !utterance) {
+    return res.status(400).json({
+      success: false,
+      message: "Intent dan utterance wajib diisi",
+    });
+  }
+
+  try {
+    const syncResult = await syncIntentToVector(intent, utterance);
+    const result = await db.query(
+      `
+      SELECT
+        id,
+        intent,
+        utterance,
+        updated_at,
+        embedding IS NOT NULL AS indexed
+      FROM intent_embeddings
+      WHERE id = $1
+      `,
+      [syncResult.id],
+    );
+
+    res.json({
+      success: true,
+      message: "Intent berhasil disimpan dan diindex",
+      data: result.rows[0],
+    });
+  } catch (error) {
+    console.error("POST /intent-embeddings error:", error);
+    res.status(500).json({
+      success: false,
+      message: error.message || "Gagal menyimpan intent",
+      error: error.message,
+    });
+  }
+});
+
+app.put("/intent-embeddings/:id", async (req, res) => {
+  const { id } = req.params;
+  const { intent, utterance } = req.body;
+
+  if (!intent || !utterance) {
+    return res.status(400).json({
+      success: false,
+      message: "Intent dan utterance wajib diisi",
+    });
+  }
+
+  try {
+    const oldResult = await db.query(
+      "SELECT id, intent, utterance FROM intent_embeddings WHERE id = $1",
+      [id],
+    );
+
+    if (oldResult.rows.length === 0) {
+      return res.status(404).json({
+        success: false,
+        message: "Intent tidak ditemukan",
+      });
+    }
+
+    const syncResult = await updateIntentVector(id, intent, utterance);
+
+    const result = await db.query(
+      `
+      SELECT
+        id,
+        intent,
+        utterance,
+        updated_at,
+        embedding IS NOT NULL AS indexed
+      FROM intent_embeddings
+      WHERE id = $1
+      `,
+      [syncResult.id],
+    );
+
+    res.json({
+      success: true,
+      message: "Intent berhasil diperbarui dan diindex ulang",
+      data: result.rows[0],
+    });
+  } catch (error) {
+    console.error("PUT /intent-embeddings/:id error:", error);
+    res.status(500).json({
+      success: false,
+      message: error.message || "Gagal memperbarui intent",
+      error: error.message,
+    });
+  }
+});
+
+app.delete("/intent-embeddings/:id", async (req, res) => {
+  try {
+    await db.query("DELETE FROM intent_embeddings WHERE id = $1", [
+      req.params.id,
+    ]);
+
+    res.json({
+      success: true,
+      message: "Intent berhasil dihapus",
+    });
+  } catch (error) {
+    console.error("DELETE /intent-embeddings/:id error:", error);
+    res.status(500).json({
+      success: false,
+      message: "Gagal menghapus intent",
+      error: error.message,
+    });
+  }
+});
+
+// =======================
 // DOKUMEN RAG (FULL INCREMENTAL)
 // =======================
 
@@ -204,6 +392,7 @@ app.get("/dokumen-rag", async (req, res) => {
 app.post("/dokumen-rag", upload.single("file"), async (req, res) => {
   const { judul } = req.body;
   const file = req.file?.buffer;
+  let newDoc = null;
 
   if (!judul || !file) {
     return res.status(400).json({
@@ -219,21 +408,30 @@ app.post("/dokumen-rag", upload.single("file"), async (req, res) => {
       [judul, file],
     );
 
-    const newDoc = result.rows[0];
+    newDoc = result.rows[0];
 
     // 2. Proses vector setelah INSERT berhasil
-    await processDocumentToVector(newDoc.id, newDoc.judul, file);
+    const vectorResult = await processDocumentToVector(newDoc.id, newDoc.judul, file);
 
     res.json({
       success: true,
       message: "Dokumen berhasil diupload dan diindex",
       data: newDoc,
+      chunk_count: vectorResult.chunk_count,
     });
   } catch (error) {
+    if (newDoc?.id) {
+      try {
+        await db.query("DELETE FROM dokumen_rag WHERE id = $1", [newDoc.id]);
+      } catch (cleanupError) {
+        console.error("Cleanup dokumen gagal:", cleanupError);
+      }
+    }
+
     console.error("POST /dokumen-rag error:", error);
     res.status(500).json({
       success: false,
-      message: "Gagal upload dokumen",
+      message: error.message || "Gagal upload dokumen",
       error: error.message,
     });
   }
@@ -303,12 +501,13 @@ app.put("/dokumen-rag/:id", upload.single("file"), async (req, res) => {
       const doc = result.rows[0];
 
       // re-index hanya jika file berubah
-      await processDocumentToVector(doc.id, doc.judul, file);
+      const vectorResult = await processDocumentToVector(doc.id, doc.judul, file);
 
       return res.json({
         success: true,
         message: "Dokumen berhasil diupdate dan diindex ulang",
         data: doc,
+        chunk_count: vectorResult.chunk_count,
       });
     }
 
@@ -335,7 +534,7 @@ app.put("/dokumen-rag/:id", upload.single("file"), async (req, res) => {
 
     res.status(500).json({
       success: false,
-      message: "Gagal update dokumen",
+      message: error.message || "Gagal update dokumen",
       error: error.message,
     });
   }
@@ -362,13 +561,28 @@ app.delete("/dokumen-rag/:id", async (req, res) => {
 // REBUILD DATA LAYANAN
 // =======================
 
+app.post("/rebuild-dokumen-rag", async (req, res) => {
+  try {
+    const result = await runPythonSync("rebuild-dokumen-rag", {});
+
+    if (!result.success) {
+      return res.status(500).json(result);
+    }
+
+    res.json(result);
+  } catch (error) {
+    console.error("POST /rebuild-dokumen-rag error:", error);
+    res.status(500).json({
+      success: false,
+      message: error.message || "Gagal rebuild dokumen RAG",
+      error: error.message,
+    });
+  }
+});
+
 app.post("/rebuild-data-layanan", async (req, res) => {
   try {
-    const response = await fetch("http://localhost:8000/rebuild-data-layanan", {
-      method: "POST",
-    });
-
-    const result = await response.json();
+    const result = await runPythonSync("rebuild-data-layanan", {});
 
     if (!result.success) {
       return res.status(500).json(result);

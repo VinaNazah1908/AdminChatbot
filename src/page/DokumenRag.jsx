@@ -6,6 +6,7 @@ import {
   lihatDokumen,
   updateDokumen,
 } from "../services/api";
+import { Pagination } from "../components/Pagination";
 import {
   Eye,
   Pencil,
@@ -131,16 +132,16 @@ const handleSubmit = async (e) => {
 
     if (mode === "add") {
       await uploadDokumen(form);
-      showToast("✅ Dokumen berhasil diupload.");
+      showToast("Dokumen berhasil diupload dan diindex.");
     } else {
       await updateDokumen(selectedId, form);
-      showToast("✅ Dokumen berhasil diupdate.");
+      showToast("Dokumen berhasil diupdate.");
     }
 
     await fetchDocuments();
   } catch (err) {
     console.log(err);
-    showToast("❌ Gagal memproses dokumen.");
+    showToast(err.message || "Gagal memproses dokumen.");
   } finally {
     setIsProcessing(false);
   }
@@ -155,10 +156,10 @@ const handleSubmit = async (e) => {
     try {
       await hapusDokumen(id);
       await fetchDocuments();
-      showToast("✅ Dokumen berhasil dihapus.");
+      showToast("Dokumen berhasil dihapus.");
     } catch (error) {
       console.error(error);
-      showToast("❌ Gagal menghapus dokumen.");
+      showToast("Gagal menghapus dokumen.");
     }
   };
 
@@ -294,37 +295,14 @@ const handleSubmit = async (e) => {
           </table>
         </div>
 
-        {/* Pagination yang lebih rapi */}
-        <div className="mt-4 flex items-center justify-between">
-          <p className="text-sm text-gray-600">
-            Menampilkan {paginatedDocuments.length} dari{" "}
-            {filteredDocuments.length} data
-          </p>
-
-          <div className="flex items-center gap-2">
-            <button
-              onClick={() => setCurrentPage((prev) => Math.max(prev - 1, 1))}
-              disabled={currentPage === 1}
-              className="rounded-md border border-gray-300 px-4 py-2 text-sm disabled:opacity-50"
-            >
-              Sebelumnya
-            </button>
-
-            <span className="px-4 py-2 text-sm">
-              Halaman <strong>{currentPage}</strong> dari {totalPages}
-            </span>
-
-            <button
-              onClick={() =>
-                setCurrentPage((prev) => Math.min(prev + 1, totalPages))
-              }
-              disabled={currentPage === totalPages}
-              className="rounded-md border border-gray-300 px-4 py-2 text-sm disabled:opacity-50"
-            >
-              Berikutnya
-            </button>
-          </div>
-        </div>
+        <Pagination
+          currentPage={currentPage}
+          totalPages={totalPages}
+          totalItems={filteredDocuments.length}
+          visibleItems={paginatedDocuments.length}
+          onPageChange={setCurrentPage}
+          disabled={isProcessing}
+        />
       </div>
 
       {/* MODAL dengan Loading */}

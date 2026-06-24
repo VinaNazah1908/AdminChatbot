@@ -1,4 +1,4 @@
-import { FileText, Info, Users } from "lucide-react";
+import { FileText, Info, MessageSquare, Users } from "lucide-react";
 import { NavLink } from "react-router-dom";
 import logo from "../assets/logo_secondary.png";
 
@@ -6,6 +6,7 @@ export function Sidebar({ isOpen }) {
   const menuItems = [
     { icon: FileText, label: "Dokumen RAG", path: "/" },
     { icon: Info, label: "Data Layanan", path: "/data_layanan" },
+    { icon: MessageSquare, label: "Data Intent", path: "/data-intent" },
     { icon: Users, label: "Riwayat Konsultasi", path: "/riwayat-konsultasi" },
   ];
 

@@ -4,6 +4,7 @@ import { Sidebar } from "./page/sidebar";
 import { Navbar } from "./page/navbar";
 import Dokumen from "./page/DokumenRag";
 import Hotline from "./page/DataLayanan";
+import DataIntent from "./page/DataIntent";
 import RiwayatKonsultasi from "./page/RiwayatKonsultasi";
 import HistoryChat from "./page/HistoryChat";
 
@@ -21,6 +22,7 @@ function App() {
           <Routes>
             <Route path="/" element={<Dokumen />} />
             <Route path="/data_layanan" element={<Hotline />} />
+            <Route path="/data-intent" element={<DataIntent />} />
             <Route path="/riwayat-konsultasi" element={<RiwayatKonsultasi />} />
             <Route path="/riwayat-konsultasi/:idLaporan" element={<HistoryChat />}/>
           </Routes>

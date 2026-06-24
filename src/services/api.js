@@ -40,6 +40,63 @@ export const hapusDataLayanan = async (id) => {
 };
 
 // ====================
+// INTENT EMBEDDINGS
+// ====================
+
+export const getIntentEmbeddings = async () => {
+  const res = await fetch(`${BASE_URL}/intent-embeddings`);
+  if (!res.ok) throw new Error("Gagal mengambil data intent");
+  return res.json();
+};
+
+export const tambahIntentEmbedding = async (data) => {
+  const res = await fetch(`${BASE_URL}/intent-embeddings`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify(data),
+  });
+
+  const result = await res.json();
+  if (!res.ok || result.success === false) {
+    throw new Error(result.message || "Gagal menyimpan intent");
+  }
+
+  return result;
+};
+
+export const updateIntentEmbedding = async (id, data) => {
+  const res = await fetch(`${BASE_URL}/intent-embeddings/${id}`, {
+    method: "PUT",
+    headers: {
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify(data),
+  });
+
+  const result = await res.json();
+  if (!res.ok || result.success === false) {
+    throw new Error(result.message || "Gagal memperbarui intent");
+  }
+
+  return result;
+};
+
+export const hapusIntentEmbedding = async (id) => {
+  const res = await fetch(`${BASE_URL}/intent-embeddings/${id}`, {
+    method: "DELETE",
+  });
+
+  const result = await res.json();
+  if (!res.ok || result.success === false) {
+    throw new Error(result.message || "Gagal menghapus intent");
+  }
+
+  return result;
+};
+
+// ====================
 // DOKUMEN RAG
 // ====================
 
@@ -54,7 +111,12 @@ export const uploadDokumen = async (formData) => {
     body: formData,
   });
 
-  return res.json();
+  const result = await res.json();
+  if (!res.ok || result.success === false) {
+    throw new Error(result.message || "Gagal upload dokumen");
+  }
+
+  return result;
 };
 
 export const hapusDokumen = async (id) => {
@@ -73,7 +135,12 @@ export const updateDokumen = async (id, formData) => {
     body: formData,
   });
 
-  return res.json();
+  const result = await res.json();
+  if (!res.ok || result.success === false) {
+    throw new Error(result.message || "Gagal update dokumen");
+  }
+
+  return result;
 };
 
 export const rebuildDokumenRag = async () => {

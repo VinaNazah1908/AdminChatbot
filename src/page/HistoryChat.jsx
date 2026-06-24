@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect,useMemo, useState } from "react";
 import { ArrowLeft, User, Bot } from "lucide-react";
 import { useNavigate, useParams } from "react-router-dom";
 import { getMessagesByLaporan } from "../services/api";
@@ -10,6 +10,17 @@ export default function HistoryChat() {
   const [messages, setMessages] = useState([]);
   const [laporan, setLaporan] = useState(null);
   const [toast, setToast] = useState("");
+  const intentSummary = useMemo(() => {
+    const counts = {};
+
+    messages.forEach((msg) => {
+      if (!msg.intent) return;
+
+      counts[msg.intent] = (counts[msg.intent] || 0) + 1;
+    });
+
+    return Object.entries(counts).sort((a, b) => b[1] - a[1]);
+  }, [messages]);
 
   const showToast = (message) => {
     setToast(message);
@@ -35,7 +46,7 @@ export default function HistoryChat() {
   return (
     <main className="relative p-3">
       {toast && (
-        <div className="fixed right-6 top-6 z-10000 rounded-md bg-#00923F px-5 py-3 text-sm font-medium text-white shadow-lg">
+        <div className="fixed right-6 top-6 z-[10000] rounded-md bg-[#00923F] px-5 py-3 text-sm font-medium text-white shadow-lg">
           {toast}
         </div>
       )}
@@ -96,6 +107,24 @@ export default function HistoryChat() {
             <div className="mt-4">
               <p className="text-gray-500">Isi Laporan Awal</p>
               <p className="font-medium">{laporan.isi_laporan}</p>
+            </div>
+          </div>
+        )}
+        {intentSummary.length > 0 && (
+          <div className="mb-5 rounded-md border border-[#00923F] bg-[#f8fff9] p-4">
+            <h2 className="mb-3 text-sm font-bold text-[#00923F]">
+              Ringkasan Intent Percakapan
+            </h2>
+
+            <div className="flex flex-wrap gap-2">
+              {intentSummary.map(([intent, total]) => (
+                <span
+                  key={intent}
+                  className="rounded-full bg-[#00923F] px-3 py-1 text-xs text-white"
+                >
+                  {intent} ({total})
+                </span>
+              ))}
             </div>
           </div>
         )}

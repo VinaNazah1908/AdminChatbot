@@ -143,14 +143,6 @@ export const updateDokumen = async (id, formData) => {
   return result;
 };
 
-export const rebuildDokumenRag = async () => {
-  const res = await fetch(`${BASE_URL}/rebuild-dokumen-rag`, {
-    method: "POST",
-  });
-
-  return res.json();
-};
-
 export const rebuildDataLayanan = async () => {
   const res = await fetch(`${BASE_URL}/rebuild-data-layanan`, {
     method: "POST",
